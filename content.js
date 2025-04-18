@@ -23,37 +23,57 @@ function addJdButton(container, magnetLink) {
 
         // Send message to background to handle the full RD -> JD2 flow
         chrome.runtime.sendMessage({ action: "processAndSendToJdViaContentScript", magnetLink: magnetLink }, (response) => {
+            // *** BEGIN Context Invalidation Check ***
             if (chrome.runtime.lastError) {
-                // Handle errors like background script not ready or other issues
-                console.error('Error sending message:', chrome.runtime.lastError.message);
-                jdButton.textContent = 'Error!';
-                jdButton.style.backgroundColor = '#dc3545'; // Red for error
-                setTimeout(() => {
-                    jdButton.textContent = 'JD2';
-                    jdButton.disabled = false;
-                    jdButton.style.backgroundColor = ''; // Reset style
-                }, 5000); // Longer timeout for errors
-            } else if (response && response.success) {
+                // Check if the error message indicates context invalidation
+                if (chrome.runtime.lastError.message?.includes("Extension context invalidated")) {
+                    console.warn('JD2 Button Response: Context invalidated (e.g., page navigated away). Cannot update button status.');
+                    // No further action needed, button is likely gone or irrelevant
+                } else {
+                    // Handle other unexpected errors during message sending/receiving
+                    console.error('JD2 Button Response Error:', chrome.runtime.lastError.message);
+                    // Attempt to update button to show error, but it might fail if context is gone
+                    try {
+                       jdButton.textContent = 'Error!';
+                       jdButton.style.backgroundColor = '#dc3545'; // Red for error
+                       jdButton.title = `Error: ${chrome.runtime.lastError.message}`;
+                    } catch (e) { /* Ignore if button access fails */ }
+                }
+                return; // Stop processing this callback
+            }
+            // *** END Context Invalidation Check ***
+
+            // --- Proceed only if context is valid ---
+
+            if (response && response.success) {
                 console.log('Successfully processed and sent to JD2');
                 jdButton.textContent = 'Sent!';
                 jdButton.style.backgroundColor = '#198754'; // Darker green for success
+                jdButton.title = 'Successfully sent to JDownloader2 via Real-Debrid';
                 // Optionally reset button after a delay
                 setTimeout(() => {
-                    jdButton.textContent = 'JD2';
-                    jdButton.disabled = false;
-                    jdButton.style.backgroundColor = ''; // Reset style
+                    // Check if button still exists before resetting
+                    if (document.body.contains(jdButton)) {
+                        jdButton.textContent = 'JD2';
+                        jdButton.disabled = false;
+                        jdButton.style.backgroundColor = ''; // Reset style
+                        jdButton.title = 'Send to Real-Debrid then to JDownloader2';
+                    }
                 }, 3000);
             } else {
-                const errorMessage = response ? (response.error || 'Unknown Error') : 'No response';
+                const errorMessage = response ? (response.error || 'Unknown Error') : 'Failed (No response from background)';
                 console.error('Failed to process/send to JD2:', errorMessage);
                 jdButton.textContent = 'Failed!';
                 jdButton.title = `Error: ${errorMessage}`; // Show error on hover
                 jdButton.style.backgroundColor = '#dc3545'; // Red for error
                  setTimeout(() => {
-                    jdButton.textContent = 'JD2';
-                    jdButton.disabled = false;
-                    jdButton.style.backgroundColor = ''; // Reset style
-                    jdButton.title = 'Send to Real-Debrid then to JDownloader2'; // Reset tooltip
+                     // Check if button still exists before resetting
+                    if (document.body.contains(jdButton)) {
+                        jdButton.textContent = 'JD2';
+                        jdButton.disabled = false;
+                        jdButton.style.backgroundColor = ''; // Reset style
+                        jdButton.title = 'Send to Real-Debrid then to JDownloader2'; // Reset tooltip
+                    }
                 }, 5000); // Longer timeout for errors
             }
         });
@@ -77,14 +97,16 @@ function findAndAddButtons() {
             const magnetLink = magnetLinkElement.href;
             // Determine the correct parent/reference element for insertion
             let insertionReference = container;
-            if (container.tagName === 'TD') {
-                // In table view, find the magnet link within the TD
-                insertionReference = container.querySelector('a[href^="magnet:?"]');
-            }
-            if (insertionReference) {
-                 addJdButton(insertionReference.parentNode, magnetLink); // Pass parent node for insertion
-            }
+             // In table view (td.text-center), the magnet link is usually inside the TD.
+             // In footer view (div.panel-footer), the magnet link is directly inside.
+             // We need the *parent* of the magnet link to insert the button *after* it.
+            let parentForInsertion = magnetLinkElement.parentNode;
 
+            if (parentForInsertion) {
+                 addJdButton(parentForInsertion, magnetLink);
+            } else {
+                 console.warn("Could not find suitable parent to insert JD2 button near:", magnetLinkElement);
+            }
         }
     });
 }
@@ -97,11 +119,18 @@ const observer = new MutationObserver((mutations) => {
     let needsReScan = false;
     for (const mutation of mutations) {
         if (mutation.addedNodes.length > 0) {
-            // Simple check: if any nodes were added, re-scan
-            needsReScan = true;
-            break;
+            // Check if any added node might contain relevant elements
+            mutation.addedNodes.forEach(node => {
+                if (node.nodeType === Node.ELEMENT_NODE) {
+                    if (node.querySelector('a[href^="magnet:?"]')) {
+                        needsReScan = true;
+                    }
+                }
+            });
         }
+        if (needsReScan) break; // No need to check further mutations
     }
+
     if (needsReScan) {
         // Debounce this in a real-world scenario if it fires too often
         // console.log("DOM changed, re-scanning for buttons...");
