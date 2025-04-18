@@ -206,8 +206,7 @@ async function sendToJDownloader(urls) {
     console.log(`Sending ${urls.length} links to JDownloader...`);
     const jdUrl = `http://127.0.0.1:9666/flash/add`;
     const data = new URLSearchParams();
-    data.append('urls', urls.join('
-')); // JDownloader expects newline separated URLs for POST
+    data.append('urls', urls.join('')); // JDownloader expects newline separated URLs for POST
 
     try {
         const response = await fetch(jdUrl, {
