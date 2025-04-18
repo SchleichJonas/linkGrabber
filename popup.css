@@ -1,0 +1,45 @@
+button {
+    background-color: #007bff;
+    color: white;
+    border: none;
+    padding: 5px 8px;
+    cursor: pointer;
+    border-radius: 4px;
+    font-size: 12px;
+    margin-left: 5px;
+}
+
+button:hover {
+    background-color: #0056b3;
+}
+
+button.debrid-btn {
+    background-color: #28a745;
+}
+
+button.download-btn {
+    background-color: #28a745;
+}
+
+button.debrid-btn:hover {
+    background-color: #218838;
+}
+
+button.download-btn:hover {
+    background-color: #218838;
+}
+
+li {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin: 5px 0;
+    word-wrap: break-word;
+}
+
+a {
+    flex-grow: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
