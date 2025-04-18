@@ -7,7 +7,7 @@ function addRealDebridButton(container, magnetLink) {
     }
 
     const rdButton = document.createElement('button');
-    rdButton.textContent = 'Add to RD';
+    rdButton.textContent = 'RD';
     rdButton.className = 'rd-button-site btn btn-primary btn-sm'; // Use Nyaa classes + custom
     rdButton.style.marginLeft = '5px'; // Add some space
     rdButton.style.verticalAlign = 'middle'; // Align with other links/buttons

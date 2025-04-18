@@ -161,8 +161,7 @@ async function sendToJDownloader(urls) {
     const jdUrl = `http://127.0.0.1:9666/flash/add`;
     const data = new URLSearchParams();
     // Click'n'Load typically expects URLs separated by newlines for POST
-    data.append('urls', urls.join('
-'));
+    data.append('urls', urls.join(''));
 
     const response = await fetch(jdUrl, {
         method: 'POST',
