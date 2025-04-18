@@ -1,45 +1,200 @@
-button {
-    background-color: #007bff;
-    color: white;
-    border: none;
-    padding: 5px 8px;
-    cursor: pointer;
+body {
+    font-family: sans-serif;
+    width: 400px; /* Adjusted width */
+    padding: 10px;
+    background-color: #f4f4f9;
+    color: #333;
+}
+
+.container {
+    display: flex;
+    flex-direction: column;
+    gap: 15px; /* Spacing between sections */
+}
+
+h1 {
+    text-align: center;
+    color: #0056b3;
+    margin-bottom: 10px;
+    font-size: 1.4em;
+}
+
+/* API Key Section */
+.api-key-section {
+    border: 1px solid #ccc;
+    padding: 10px;
+    border-radius: 5px;
+    background-color: #fff;
+}
+
+.api-key-section label {
+    display: block;
+    margin-bottom: 5px;
+    font-weight: bold;
+}
+
+.input-group {
+    display: flex;
+    gap: 5px;
+}
+
+#apiKeyInput {
+    flex-grow: 1;
+    padding: 8px;
+    border: 1px solid #ccc;
     border-radius: 4px;
-    font-size: 12px;
-    margin-left: 5px;
 }
 
-button:hover {
-    background-color: #0056b3;
+/* Status & Loading */
+.status {
+    padding: 8px;
+    border-radius: 4px;
+    text-align: center;
+    font-size: 0.9em;
+    margin-top: 5px;
 }
 
-button.debrid-btn {
-    background-color: #28a745;
+.status.info {
+    background-color: #e0e0e0;
+    color: #333;
 }
 
-button.download-btn {
-    background-color: #28a745;
+.status.success {
+    background-color: #d4edda;
+    color: #155724;
 }
 
-button.debrid-btn:hover {
-    background-color: #218838;
+.status.warning {
+    background-color: #fff3cd;
+    color: #856404;
 }
 
-button.download-btn:hover {
-    background-color: #218838;
+.status.error {
+    background-color: #f8d7da;
+    color: #721c24;
+}
+
+.loading {
+    text-align: center;
+    padding: 10px;
+    font-style: italic;
+    color: #555;
+}
+
+/* General & MAL Sections */
+h2 {
+    color: #0056b3;
+    border-bottom: 1px solid #eee;
+    padding-bottom: 5px;
+    margin-top: 10px;
+    font-size: 1.1em;
+}
+
+#generalLinksSection,
+#myAnimeListSection {
+    border: 1px solid #ddd;
+    padding: 10px;
+    border-radius: 5px;
+    background-color: #f9f9f9;
+}
+
+.mal-info {
+    font-weight: bold;
+    margin-bottom: 10px;
+}
+
+/* Lists */
+ul {
+    list-style: none;
+    padding: 0;
+    margin: 10px 0 0 0;
+    max-height: 200px; /* Limit list height */
+    overflow-y: auto; /* Add scrollbar */
+    border: 1px solid #eee;
+    border-radius: 4px;
+    background-color: #fff;
 }
 
 li {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    margin: 5px 0;
-    word-wrap: break-word;
+    padding: 8px 10px;
+    border-bottom: 1px solid #eee;
+    font-size: 0.9em;
+    gap: 10px; /* Space between text and buttons */
 }
 
-a {
+li:last-child {
+    border-bottom: none;
+}
+
+li span {
     flex-grow: 1;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+    cursor: default; /* Indicate full text on hover via title */
+}
+
+/* Buttons */
+.button-group {
+    display: flex;
+    gap: 5px;
+    flex-shrink: 0; /* Prevent buttons from shrinking */
+}
+
+button {
+    padding: 4px 8px;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 0.85em;
+    transition: background-color 0.2s ease;
+}
+
+button:disabled {
+    background-color: #ccc;
+    cursor: not-allowed;
+}
+
+.save-btn {
+    background-color: #007bff;
+    color: white;
+}
+.save-btn:hover:not(:disabled) {
+    background-color: #0056b3;
+}
+
+.action-button {
+    background-color: #6c757d;
+    color: white;
+    margin-top: 5px; /* Add some space above action buttons */
+}
+.action-button:hover:not(:disabled) {
+    background-color: #5a6268;
+}
+
+.rd-btn {
+    background-color: #ffc107; /* Amber */
+    color: #333;
+}
+.rd-btn:hover:not(:disabled) {
+    background-color: #e0a800;
+}
+
+.jd-btn {
+    background-color: #28a745; /* Green */
+    color: white;
+}
+.jd-btn:hover:not(:disabled) {
+    background-color: #218838;
+}
+
+.copy-btn {
+    background-color: #17a2b8; /* Teal */
+    color: white;
+}
+.copy-btn:hover:not(:disabled) {
+    background-color: #138496;
 }

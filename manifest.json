@@ -1,40 +1,38 @@
 {
-    "manifest_version": 2,
-    "name": "linkGrabber",
-    "version": "1.0",
-    "description": "Grabs links containing 'magnet' from the current tab.",
-    "permissions": [
-        "activeTab",
-        "storage",
-        "https://api.real-debrid.com/",
-        "https://nyaa.si/*", 
-        "activeTab",
-        "scripting"
-    ],
-    "browser_action": {
-      "default_popup": "popup.html",
-      "default_icon": {
-        "16": "icons/icon-16.png",
-        "48": "icons/icon-48.png",
-        "128": "icons/icon-128.png"
-      }
-    },
-    "background": {
-      "scripts": ["background.js"],
-      "persistent": false
-    },
-    "icons": {
+  "manifest_version": 3,
+  "name": "linkGrabber V3",
+  "version": "1.1",
+  "description": "Grabs magnet links, sends them to Real-Debrid, and optionally to JDownloader2. Special handling for MyAnimeList.",
+  "permissions": [
+    "storage",
+    "activeTab",
+    "scripting",
+    "offscreen"
+  ],
+  "host_permissions": [
+    "https://api.real-debrid.com/*",
+    "https://nyaa.si/*",
+    "http://127.0.0.1:9666/*" 
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_icon": {
       "16": "icons/icon-16.png",
       "48": "icons/icon-48.png",
       "128": "icons/icon-128.png"
-    },
-    "browser_specific_settings": {
+    }
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "icons": {
+    "16": "icons/icon-16.png",
+    "48": "icons/icon-48.png",
+    "128": "icons/icon-128.png"
+  },
+  "browser_specific_settings": {
     "gecko": {
       "id": "jonas.schleich@extension.com"
     }
-  },
-  "host_permissions": [
-    "https://nyaa.si/*"
-  ]
+  }
 }
-  

@@ -1,381 +1,584 @@
-REAL_DEBRID_API_KEY = "";
+// Global state
+let REAL_DEBRID_API_KEY = "";
 
-document.addEventListener('DOMContentLoaded', function () {
-    chrome.tabs.query({ active: true, currentWindow: true }, function (tabs) {
-        let tab = tabs[0];
-        let url = tab.url;
+// DOM Elements
+let apiKeyInput;
+let saveApiKeyButton;
+let magnetLinksList;
+let statusMessage;
+let loadingIndicator;
+let myAnimeListSection;
+let generalLinksSection;
 
-        if (url.includes("myanimelist.net/anime/")) {
-            MyAnimeList(tab.id);
-        } else {
-            extractMagnetLinks(tab.id);
-        }
-        
-    });
+document.addEventListener('DOMContentLoaded', async () => {
+    // Get DOM elements
+    apiKeyInput = document.getElementById('apiKeyInput');
+    saveApiKeyButton = document.getElementById('saveApiKey');
+    magnetLinksList = document.getElementById('magnetLinksList');
+    statusMessage = document.getElementById('statusMessage');
+    loadingIndicator = document.getElementById('loadingIndicator');
+    myAnimeListSection = document.getElementById('myAnimeListSection');
+    generalLinksSection = document.getElementById('generalLinksSection');
+
+    // Load saved API key
+    const data = await chrome.storage.local.get('apiKey');
+    if (data.apiKey) {
+        apiKeyInput.value = data.apiKey;
+        REAL_DEBRID_API_KEY = data.apiKey;
+        updateStatus('API Key loaded.', 'success');
+    } else {
+        updateStatus('Real-Debrid API Key not set.', 'warning');
+    }
+
+    // Save API key button listener
+    saveApiKeyButton.addEventListener('click', saveApiKey);
+
+    // Determine page type and execute appropriate logic
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (tab.url && tab.url.includes("myanimelist.net/anime/")) {
+        showSection(myAnimeListSection);
+        handleMyAnimeListPage(tab);
+    } else {
+        showSection(generalLinksSection);
+        handleGenericPage(tab);
+    }
 });
+
+// --- UI Helper Functions ---
+
+function updateStatus(message, type = 'info') { // types: info, success, warning, error
+    if (!statusMessage) return;
+    statusMessage.textContent = message;
+    statusMessage.className = `status ${type}`;
+    console.log(`Status (${type}): ${message}`);
+}
+
+function showLoading(message = 'Loading...') {
+    if (loadingIndicator) {
+        loadingIndicator.textContent = message;
+        loadingIndicator.style.display = 'block';
+    }
+    if (magnetLinksList) magnetLinksList.style.display = 'none';
+}
+
+function hideLoading() {
+    if (loadingIndicator) loadingIndicator.style.display = 'none';
+    if (magnetLinksList) magnetLinksList.style.display = 'block';
+}
+
+function showSection(sectionToShow) {
+    myAnimeListSection.style.display = 'none';
+    generalLinksSection.style.display = 'none';
+    if (sectionToShow) {
+        sectionToShow.style.display = 'block';
+    }
+}
+
+function clearMagnetLinksList() {
+    if (magnetLinksList) magnetLinksList.innerHTML = '';
+}
+
+// --- API Key Handling ---
+
+async function saveApiKey() {
+    const apiKey = apiKeyInput.value.trim();
+    if (apiKey) {
+        try {
+            // Send to background to store securely
+            await chrome.runtime.sendMessage({ action: "storeApiKey", apiKey: apiKey });
+            REAL_DEBRID_API_KEY = apiKey;
+            updateStatus('API Key saved successfully!', 'success');
+        } catch (error) {
+            console.error("Error saving API Key:", error);
+            updateStatus(`Failed to save API Key: ${error.message}`, 'error');
+        }
+    } else {
+        updateStatus('API Key cannot be empty.', 'warning');
+    }
+}
+
+// --- Generic Page Logic ---
+
+async function handleGenericPage(tab) {
+    updateStatus('Looking for magnet links...');
+    showLoading('Extracting links...');
+    try {
+        const results = await chrome.scripting.executeScript({
+            target: { tabId: tab.id },
+            func: extractMagnetLinksFromPage // Function defined below
+        });
+
+        hideLoading();
+        const links = results[0]?.result || [];
+        clearMagnetLinksList();
+
+        if (links.length > 0) {
+            updateStatus(`Found ${links.length} magnet links.`, 'success');
+            links.forEach(link => addMagnetLinkToList(link));
+        } else {
+            updateStatus('No magnet links found on this page.', 'info');
+            magnetLinksList.innerHTML = '<li>No magnet links found.</li>';
+        }
+    } catch (error) {
+        hideLoading();
+        console.error("Error extracting magnet links:", error);
+        updateStatus(`Error extracting links: ${error.message}`, 'error');
+    }
+}
+
+// This function is injected into the content page
+function extractMagnetLinksFromPage() {
+    const links = document.getElementsByTagName('a');
+    const magnetLinks = [];
+    for (let i = 0; i < links.length; i++) {
+        if (links[i].href.startsWith('magnet:?')) {
+            magnetLinks.push(links[i].href);
+        }
+    }
+    return magnetLinks;
+}
+
+function addMagnetLinkToList(link) {
+    const listItem = document.createElement('li');
+
+    const linkText = document.createElement('span');
+    linkText.textContent = link.substring(0, 60) + '...'; // Shorten display
+    linkText.title = link; // Full link on hover
+
+    const buttonContainer = document.createElement('div');
+    buttonContainer.classList.add('button-group');
+
+    // Real-Debrid Button
+    const rdButton = createButton('RD', 'rd-btn', () => processLinkWithRealDebrid(link));
+    // JDownloader Button (via Real-Debrid)
+    const jdButton = createButton('JD2', 'jd-btn', () => processAndSendToJdownloader(link));
+    // Copy Button
+    const copyButton = createButton('Copy', 'copy-btn', () => {
+        navigator.clipboard.writeText(link)
+            .then(() => updateStatus('Link copied!', 'success'))
+            .catch(err => updateStatus(`Copy failed: ${err.message}`, 'error'));
+    });
+
+    buttonContainer.appendChild(rdButton);
+    buttonContainer.appendChild(jdButton);
+    buttonContainer.appendChild(copyButton);
+
+    listItem.appendChild(linkText);
+    listItem.appendChild(buttonContainer);
+    magnetLinksList.appendChild(listItem);
+}
+
+// --- MyAnimeList Page Logic ---
+
+async function handleMyAnimeListPage(tab) {
+    updateStatus('MyAnimeList page detected. Fetching info...');
+    showLoading('Fetching anime details...');
+    try {
+        const results = await chrome.scripting.executeScript({
+            target: { tabId: tab.id },
+            func: extractAnimeInfoFromPage // Function defined below
+        });
+
+        const animeInfo = results[0]?.result;
+        if (!animeInfo || !animeInfo.name || !animeInfo.episodes) {
+            throw new Error('Could not extract anime details from the page.');
+        }
+
+        updateStatus(`Found: ${animeInfo.name} (${animeInfo.episodes} episodes).`, 'info');
+
+        // Display MAL info and button
+        displayMyAnimeListInfo(animeInfo);
+        hideLoading(); // Hide loading before starting episode search
+
+    } catch (error) {
+        hideLoading();
+        console.error("Error handling MyAnimeList page:", error);
+        updateStatus(`Error: ${error.message}`, 'error');
+    }
+}
+
+// This function is injected into the MAL page
+function extractAnimeInfoFromPage() {
+    let name = document.querySelector('.title-name')?.textContent.trim() ||
+               document.querySelector('h1.title-name strong')?.textContent.trim(); // Try alternative selector
+    let episodesText = "Unknown";
+    const detailElements = document.querySelectorAll('.spaceit_pad');
+    for (let element of detailElements) {
+        const textContent = element.textContent || "";
+        if (textContent.includes("Episodes:")) {
+            episodesText = textContent.replace(/Episodes:/i, "").trim();
+            break;
+        }
+    }
+    // Convert episodesText to number, handle 'Unknown' or ranges
+    let episodes = parseInt(episodesText, 10);
+    if (isNaN(episodes)) {
+        episodes = 0; // Or handle 'Unknown' appropriately
+    }
+
+    return { name, episodes };
+}
+
+function displayMyAnimeListInfo(animeInfo) {
+    const malInfoDiv = document.getElementById('malInfo');
+    const fetchEpisodesButton = document.getElementById('fetchEpisodesButton');
+    const episodeLinksList = document.getElementById('episodeLinksList');
+    const malStatus = document.getElementById('malStatus');
+
+    malInfoDiv.textContent = `Anime: ${animeInfo.name} | Episodes: ${animeInfo.episodes}`;
+    episodeLinksList.innerHTML = ''; // Clear previous results
+    malStatus.textContent = '';
+
+    fetchEpisodesButton.onclick = () => {
+        if (animeInfo.episodes > 0) {
+            fetchAllEpisodes(animeInfo.name, animeInfo.episodes);
+        }
+    };
+    fetchEpisodesButton.disabled = false;
+}
+
+async function fetchAllEpisodes(name, totalEpisodes) {
+    const searchName = name.replace(/ /g, "+");
+    const malStatus = document.getElementById('malStatus');
+    const episodeLinksList = document.getElementById('episodeLinksList');
+    const sendAllToJDButton = document.getElementById('sendAllToJD');
+    const episodeLinks = new Map(); // Store magnet links per episode
+
+    malStatus.textContent = 'Fetching episode links...';
+    episodeLinksList.innerHTML = 'Searching on Nyaa.si...<br>';
+    sendAllToJDButton.style.display = 'none'; // Hide button initially
+    sendAllToJDButton.onclick = null; // Clear previous handler
+
+    let foundCount = 0;
+    let completedCount = 0;
+
+    // Prepare listeners for background responses
+    const messageListener = (message) => {
+        if (message.action === 'parseComplete' || message.action === 'parseError' || message.action === 'fetchError') {
+            completedCount++;
+            const episodeNum = message.episodeNum;
+            const statusSpan = document.getElementById(`status-ep-${episodeNum}`);
+
+            if (message.action === 'parseComplete' && message.magnetLink) {
+                foundCount++;
+                episodeLinks.set(episodeNum, message.magnetLink);
+                if (statusSpan) statusSpan.textContent = '✅ Found';
+                 episodeLinksList.innerHTML += `Ep ${episodeNum}: Found<br>`; // Simple logging
+            } else {
+                const errorMsg = message.action === 'fetchError' ? 'Fetch Error' : (message.action === 'parseError' ? 'Parse Error' : 'Not Found');
+                if (statusSpan) statusSpan.textContent = `❌ ${errorMsg}`;
+                 episodeLinksList.innerHTML += `Ep ${episodeNum}: ${errorMsg}<br>`; // Simple logging
+                console.warn(`Error or no link for episode ${episodeNum}:`, message.error || 'No link');
+            }
+
+            malStatus.textContent = `Fetching... (${completedCount}/${totalEpisodes}) | Found: ${foundCount}`;
+
+            // Check if all episodes are processed
+            if (completedCount === totalEpisodes) {
+                chrome.runtime.onMessage.removeListener(messageListener);
+                malStatus.textContent = `Search complete. Found ${foundCount}/${totalEpisodes} links.`;
+                 episodeLinksList.innerHTML = `Search complete. Found ${foundCount} links.<br>`; // Clear intermediate logs
+
+                if (foundCount > 0) {
+                    // Display found links and enable Send All button
+                    displayFoundEpisodeLinks(episodeLinks);
+                    sendAllToJDButton.style.display = 'inline-block';
+                    sendAllToJDButton.onclick = () => sendMultipleLinksToJdownloader(Array.from(episodeLinks.values()));
+                } else {
+                    episodeLinksList.innerHTML = 'No magnet links found for any episode.';
+                }
+            }
+        }
+    };
+    chrome.runtime.onMessage.addListener(messageListener);
+
+    // Initiate fetch requests via background script
+    for (let i = 1; i <= totalEpisodes; i++) {
+        // Add placeholder for status
+        // episodeLinksList.innerHTML += `<li>Ep ${i}: <span id="status-ep-${i}">Searching...</span></li>`;
+
+        const episodeSearch = `https://nyaa.si/?f=0&c=0_0&q=${searchName}+S01E${String(i).padStart(2, "0")}&s=seeders&o=desc`;
+        console.log(`Requesting search for Ep ${i}: ${episodeSearch}`);
+        chrome.runtime.sendMessage({ action: "fetchSearch", url: episodeSearch, episodeNum: i });
+        await sleep(200); // Basic rate limiting
+    }
+}
+
+function displayFoundEpisodeLinks(episodeLinksMap) {
+    const episodeLinksList = document.getElementById('episodeLinksList');
+    episodeLinksList.innerHTML = ''; // Clear previous logs
+
+    // Sort episodes by number
+    const sortedEpisodes = Array.from(episodeLinksMap.keys()).sort((a, b) => a - b);
+
+    sortedEpisodes.forEach(epNum => {
+        const magnetLink = episodeLinksMap.get(epNum);
+        const listItem = document.createElement('li');
+
+        const linkText = document.createElement('span');
+        linkText.textContent = `Ep ${epNum}: ${magnetLink.substring(0, 40)}...`;
+        linkText.title = magnetLink;
+
+        const buttonContainer = document.createElement('div');
+        buttonContainer.classList.add('button-group');
+
+        const rdButton = createButton('RD', 'rd-btn', () => processLinkWithRealDebrid(magnetLink));
+        const jdButton = createButton('JD2', 'jd-btn', () => processAndSendToJdownloader(magnetLink));
+        const copyButton = createButton('Copy', 'copy-btn', () => {
+            navigator.clipboard.writeText(magnetLink)
+                .then(() => updateStatus(`Ep ${epNum} link copied!`, 'success'))
+                .catch(err => updateStatus(`Copy failed: ${err.message}`, 'error'));
+        });
+
+        buttonContainer.appendChild(rdButton);
+        buttonContainer.appendChild(jdButton);
+        buttonContainer.appendChild(copyButton);
+
+        listItem.appendChild(linkText);
+        listItem.appendChild(buttonContainer);
+        episodeLinksList.appendChild(listItem);
+    });
+}
+
+
+// --- Core Processing Logic (Real-Debrid & JDownloader) ---
+
+async function processLinkWithRealDebrid(magnetLink) {
+    if (!REAL_DEBRID_API_KEY) {
+        updateStatus('Set Real-Debrid API Key first!', 'error');
+        return;
+    }
+    updateStatus(`Adding magnet to Real-Debrid...`, 'info');
+    showLoading('Adding to RD...');
+
+    try {
+        // 1. Add magnet to RD
+        const addResponse = await chrome.runtime.sendMessage({
+            action: "sendToRealDebrid",
+            magnetLink: magnetLink
+        });
+        if (!addResponse.success) throw new Error(addResponse.error || 'Failed to add magnet.');
+        const torrentId = addResponse.data.id;
+        updateStatus(`Added magnet (ID: ${torrentId}). Selecting files...`, 'info');
+
+        // 2. Select files (async, RD handles this)
+        const selectResponse = await chrome.runtime.sendMessage({
+            action: "selectFiles",
+            id: torrentId
+        });
+        // Selection might return 204 No Content on success, or RD might take time.
+        // We don't strictly need to wait for this for basic adding.
+        if (!selectResponse.success) {
+            // Log warning but proceed, user might need to manually select on RD website
+            console.warn(`File selection for ${torrentId} might have failed: ${selectResponse.error}`);
+             updateStatus(`Added magnet (ID: ${torrentId}). File selection may need manual confirmation on RD website.`, 'warning');
+        } else {
+             updateStatus(`Added magnet (ID: ${torrentId}) and selected files.`, 'success');
+        }
+
+        hideLoading();
+        // Optionally: Poll getTorrentInfo until status is 'downloaded'
+        // Optionally: Call unrestrictLink if needed immediately (usually not for just adding)
+
+    } catch (error) {
+        hideLoading();
+        console.error("Real-Debrid processing error:", error);
+        updateStatus(`RD Error: ${error.message}`, 'error');
+    }
+}
+
+async function processAndSendToJdownloader(magnetLink) {
+    if (!REAL_DEBRID_API_KEY) {
+        updateStatus('Set Real-Debrid API Key first!', 'error');
+        return;
+    }
+    updateStatus(`Processing link for JDownloader...`, 'info');
+    showLoading('RD > JD2...');
+
+    try {
+        // 1. Add magnet to RD
+        const addResponse = await chrome.runtime.sendMessage({ action: "sendToRealDebrid", magnetLink: magnetLink });
+        if (!addResponse.success) throw new Error(`RD Add Magnet: ${addResponse.error}`);
+        const torrentId = addResponse.data.id;
+        updateStatus(`Added (ID: ${torrentId}). Selecting files...`, 'info');
+
+        // 2. Select files
+        const selectResponse = await chrome.runtime.sendMessage({ action: "selectFiles", id: torrentId });
+        // Allow continuing even if selection has issues, RD might auto-select common files.
+        if (!selectResponse.success) {
+            console.warn(`RD File Select (${torrentId}): ${selectResponse.error}`);
+            updateStatus(`Added (ID: ${torrentId}). File selection warning: ${selectResponse.error}. Checking status...`, 'warning');
+        } else {
+            updateStatus(`Added & selected (ID: ${torrentId}). Checking status...`, 'info');
+        }
+
+        // 3. Poll for completion and get download links
+        const finalLinks = await pollTorrentCompletion(torrentId);
+        if (!finalLinks || finalLinks.length === 0) {
+            throw new Error('Could not get download links from Real-Debrid after processing.');
+        }
+        updateStatus(`Got ${finalLinks.length} download links. Sending to JDownloader...`, 'info');
+
+        // 4. Send to JDownloader
+        await sendLinksToJdownloader(finalLinks);
+        updateStatus(`Successfully sent ${finalLinks.length} links to JDownloader.`, 'success');
+        hideLoading();
+
+    } catch (error) {
+        hideLoading();
+        console.error("RD to JDownloader error:", error);
+        updateStatus(`Error: ${error.message}`, 'error');
+    }
+}
+
+async function sendMultipleLinksToJdownloader(magnetLinks) {
+    if (!REAL_DEBRID_API_KEY) {
+        updateStatus('Set Real-Debrid API Key first!', 'error');
+        return;
+    }
+    updateStatus(`Processing ${magnetLinks.length} links for JDownloader...`, 'info');
+    showLoading(`Processing ${magnetLinks.length} links...`);
+
+    let allFinalLinks = [];
+    let errors = [];
+    let currentLinkIndex = 0;
+
+    for (const magnet of magnetLinks) {
+        currentLinkIndex++;
+        updateStatus(`Processing link ${currentLinkIndex}/${magnetLinks.length}...`, 'info');
+        showLoading(`RD > JD2 (${currentLinkIndex}/${magnetLinks.length})...`);
+        try {
+            // 1. Add magnet
+            const addResponse = await chrome.runtime.sendMessage({ action: "sendToRealDebrid", magnetLink: magnet });
+            if (!addResponse.success) throw new Error(`Add Magnet: ${addResponse.error}`);
+            const torrentId = addResponse.data.id;
+
+            // 2. Select files
+            const selectResponse = await chrome.runtime.sendMessage({ action: "selectFiles", id: torrentId });
+            if (!selectResponse.success) console.warn(`File Select Warn (${torrentId}): ${selectResponse.error}`);
+
+            // 3. Poll for completion
+            const finalLinks = await pollTorrentCompletion(torrentId);
+            if (finalLinks && finalLinks.length > 0) {
+                allFinalLinks.push(...finalLinks);
+            } else {
+                 console.warn(`No links found for torrent ${torrentId} after polling.`);
+                 // Optionally add a user-facing warning here
+            }
+             await sleep(500); // Small delay between processing links
+        } catch (error) {
+            console.error(`Error processing magnet [${magnet.substring(0,30)}...]: ${error.message}`);
+            errors.push(`Link ${currentLinkIndex}: ${error.message}`);
+            // Continue to next magnet link
+        }
+    }
+
+    // 4. Send all collected links to JDownloader
+    if (allFinalLinks.length > 0) {
+        updateStatus(`Collected ${allFinalLinks.length} links. Sending to JDownloader...`, 'info');
+        try {
+            await sendLinksToJdownloader(allFinalLinks);
+            updateStatus(`Sent ${allFinalLinks.length} links to JDownloader. ${errors.length} errors occurred.`, errors.length > 0 ? 'warning' : 'success');
+        } catch (jdError) {
+            errors.push(`JDownloader Send Error: ${jdError.message}`);
+            updateStatus(`Failed to send links to JDownloader: ${jdError.message}. ${errors.length} other errors.`, 'error');
+        }
+    } else {
+        updateStatus(`No links collected to send. ${errors.length} errors occurred during processing.`, errors.length > 0 ? 'error' : 'warning');
+    }
+
+    hideLoading();
+    if (errors.length > 0) {
+        console.error("Errors during batch processing:", errors);
+        // Optionally display errors more prominently
+    }
+}
+
+async function pollTorrentCompletion(torrentId, maxAttempts = 20, delay = 3000) {
+    updateStatus(`Waiting for RD processing (ID: ${torrentId})...`, 'info');
+    for (let i = 0; i < maxAttempts; i++) {
+        try {
+            const infoResponse = await chrome.runtime.sendMessage({ action: "getTorrentInfo", id: torrentId });
+            if (!infoResponse.success) throw new Error(`GetInfo: ${infoResponse.error}`);
+
+            const torrentInfo = infoResponse.data;
+            updateStatus(`RD Status (ID: ${torrentId}): ${torrentInfo.status} (${torrentInfo.progress}%)`, 'info');
+
+            if (torrentInfo.status === 'downloaded') {
+                console.log(`Torrent ${torrentId} ready. Unrestricting links.`);
+                // Need to unrestrict the links provided in torrentInfo.links
+                const unrestrictedLinks = [];
+                for (const link of torrentInfo.links) {
+                     const unrestrictResponse = await chrome.runtime.sendMessage({ action: "unrestrictLink", downloadLink: link });
+                     if (unrestrictResponse.success && unrestrictResponse.data.download) {
+                         unrestrictedLinks.push(unrestrictResponse.data.download);
+                     } else {
+                         console.warn(`Failed to unrestrict link ${link}: ${unrestrictResponse.error || 'Unknown reason'}`);
+                         // Decide if you want to skip this link or fail entirely
+                     }
+                     await sleep(200); // Small delay between unrestricting calls
+                }
+                return unrestrictedLinks;
+            } else if (['magnet_error', 'error', 'virus', 'dead'].includes(torrentInfo.status)) {
+                throw new Error(`Torrent failed on Real-Debrid. Status: ${torrentInfo.status}`);
+            }
+            // If still processing, wait
+            await sleep(delay);
+        } catch (error) {
+            // If getTorrentInfo fails, maybe retry or throw
+            console.error(`Polling error for ${torrentId}: ${error.message}`);
+            if (i === maxAttempts - 1) { // Throw if last attempt failed
+                 throw new Error(`Polling failed for torrent ${torrentId}: ${error.message}`);
+            }
+            await sleep(delay); // Wait before retrying after an error
+        }
+    }
+    throw new Error(`Torrent ${torrentId} did not complete processing within the time limit.`);
+}
+
+async function sendLinksToJdownloader(links) {
+    if (!links || links.length === 0) {
+        updateStatus('No links to send to JDownloader.', 'warning');
+        return;
+    }
+    updateStatus(`Sending ${links.length} links to JDownloader...`, 'info');
+    try {
+        const response = await chrome.runtime.sendMessage({
+            action: 'sendToJdownloader',
+            urls: links
+        });
+        if (!response.success) {
+            throw new Error(response.error || 'Unknown JDownloader error');
+        }
+        console.log('Successfully sent links to JDownloader via background.');
+        updateStatus('Links sent to JDownloader successfully!', 'success');
+    } catch (error) {
+        console.error('Failed to send links to JDownloader:', error);
+        updateStatus(`JDownloader Error: ${error.message}`, 'error');
+        // Re-throw the error if needed for higher-level handling
+        throw error;
+    }
+}
+
+// --- Utility Functions ---
+
+function createButton(text, className, onClick) {
+    const button = document.createElement('button');
+    button.textContent = text;
+    button.className = className; // Add specific class
+    button.classList.add('action-button'); // Add general class
+    button.addEventListener('click', onClick);
+    return button;
+}
 
 function sleep(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-async function fetchEpisodes(episodes, searchName) {
-    link_list = [];
-    for (let i = 1; i <= episodes; i++) {
-        let episodeSearch = `https://nyaa.si/?f=0&c=0_0&q=${searchName}+S01E${i.toString().padStart(2, "0")}&s=seeders&o=desc`;
-        console.log("episodeSearch: " + episodeSearch);
-
-        try {
-            const response = await new Promise((resolve) => {
-                chrome.runtime.sendMessage({ action: "fetchSearch", url: episodeSearch }, resolve);
-            });
-
-            if (response.success) {
-                const parser = new DOMParser();
-                const doc = parser.parseFromString(response.html, "text/html");
-
-                // Get the first torrent row
-                const firstRow = doc.querySelector("tbody tr.default");
-                if (!firstRow) {
-                    console.log(`No valid result found for Episode ${i}`);
-                    continue;
-                }
-
-                // Get the torrent title
-                const firstResult = firstRow.querySelector("td:nth-child(2) a");
-                if (firstResult) {
-                    console.log("First Result:", firstResult.textContent.trim());
-                } else {
-                    console.log(`No valid title found for Episode ${i}`);
-                }
-
-                // Get the magnet link (find <a> inside <td> that has an <i class="fa fa-fw fa-magnet">)
-                const magnetLinkTag = firstRow.querySelector('td a[href^="magnet:"]');
-                const magnetLink = magnetLinkTag ? magnetLinkTag.href : "No magnet link found";
-                link_list.push(magnetLink);
-                console.log("Magnet Link:", magnetLink);
-            } else {
-                console.error("Error fetching search results:", response.error);
-            }
-        } catch (error) {
-            console.error("Fetch failed:", error);
-        }
-
-        // Wait 500ms before the next iteration
-        await sleep(500);
-    }
-    return link_list;
-}
-
-
-
-async function MyAnimeList(tabId) {
-    try {
-        // Wrap chrome.tabs.executeScript inside a promise to allow using await
-        let results = await new Promise((resolve, reject) => {
-            chrome.tabs.executeScript(tabId, {
-                code: '(' + extractInfo.toString() + ')();'
-            }, (results) => {
-                if (chrome.runtime.lastError) {
-                    reject(chrome.runtime.lastError);
-                } else {
-                    resolve(results);
-                }
-            });
-        });
-
-        console.log("Extracted info:", results[0]);
-
-        let animeInfo = results[0];
-        let name = animeInfo.name;
-        let episodes = animeInfo.episodes;
-
-        let searchName = name.replace(/ /g, "+");
-        console.log("searchName: " + searchName);
-
-        // Call the async function to fetch episodes
-        let link_list = await fetchEpisodes(episodes, searchName);
-
-        console.log("Anime Name:", name);
-        console.log("Episodes:", episodes);
-
-        let list = document.getElementById('magnetLinksList');
-        if (!list) {
-            console.error("Element with ID 'magnetLinksList' not found.");
-            return;
-        }
-        console.log(window.getComputedStyle(list).display);
-        list.innerHTML = ''; // Clear previous list
-
-        let listItem = document.createElement('li');
-
-        let button_jd2 = document.createElement('button');
-        button_jd2.textContent = "Click'n Load";
-        button_jd2.classList.add("download-btn"); // Use CSS class for styling
-        button_jd2.addEventListener('click', async function () {  // Make this async
-            for (const element of link_list) {
-                await downloadFiles(element, function (torrent) {
-                    SendToJD2(torrent);
-                });
-                await sleep(500); // You can now await here
-            }
-        });
-        console.log("Appending button to listItem:", button_jd2);
-        console.log("Appending listItem to list:", list);
-
-        listItem.appendChild(button_jd2);
-        list.appendChild(listItem);
-
-        console.log("Final list innerHTML:", list.innerHTML);
-    } catch (error) {
-        console.error("Error occurred:", error);
-    }
-}
-
-function extractInfo() {
-    console.log("extractInfo is running");
-
-    let name = document.querySelector('.title-english.title-inherit')?.textContent.trim() || "No name found";
-    let elements = document.querySelectorAll('.spaceit_pad');
-    let episodes = 0;
-
-    console.log("Extracted name:", name);
-
-    for (let element of elements) {
-        let label = element.querySelector('.dark_text')?.textContent.trim();
-        if (label === "Episodes:") {
-            episodes = element.textContent.replace("Episodes:", "").trim();
-        }
-    }
-
-    console.log("Extracted episodes:", episodes);
-
-    return { name, episodes };
-}
-
-
-function extractMagnetLinks(tabId){
-    chrome.tabs.executeScript(tabId, {
-        code: `
-            var links = document.getElementsByTagName('a');
-            var magnetLinks = [];
-            for (var i = 0; i < links.length; i++) {
-                if (links[i].href.includes('magnet')) {
-                    magnetLinks.push(links[i].href);
-                }
-            }
-            magnetLinks;
-        `
-    }, function (results) {
-        if (chrome.runtime.lastError) {
-            console.error(chrome.runtime.lastError);
-            return;
-        }
-
-        let links = results[0] || [];
-        let list = document.getElementById('magnetLinksList');
-        list.innerHTML = ''; // Clear previous list
-
-        if (links.length > 0) {
-            links.forEach(function (link) {
-                let listItem = document.createElement('li');
-                
-                // Create anchor tag
-                let anchor = document.createElement('a');
-                anchor.href = link;
-                anchor.textContent = link;
-                anchor.target = "_blank";
-
-                // Create button
-                let button = document.createElement('button');
-                button.textContent = "Copy";
-                button.classList.add("copy-btn"); // Use CSS class for styling
-                button.addEventListener('click', function () {
-                    navigator.clipboard.writeText(link).then(() => {
-                        alert("Magnet link copied!");
-                    }).catch(err => console.error("Failed to copy: ", err));
-                });
-
-
-                let button_debrid = document.createElement('button');
-                button_debrid.textContent = "Real Debrid";
-                button_debrid.classList.add("debrid-btn"); // Use CSS class for styling
-                button_debrid.addEventListener('click', function () {
-                    addFilesToRealDebrid(link);
-                });
-
-                let button_download = document.createElement('button');
-                button_download.textContent = "Download";
-                button_download.classList.add("download-btn"); // Use CSS class for styling
-                button_download.addEventListener('click', function () {
-                    downloadFiles(link, function(torrent){
-                        
-                    });
-                });
-
-                let button_jd2 = document.createElement('button');
-                button_jd2.textContent = "Click'n Load";
-                button_jd2.classList.add("download-btn"); // Use CSS class for styling
-                button_jd2.addEventListener('click', function () {
-                    downloadFiles(link, function(torrent){
-                        SendToJD2(torrent);
-                    });
-                });
-
-
-                listItem.appendChild(anchor);
-                listItem.appendChild(button);
-                listItem.appendChild(button_debrid);
-                listItem.appendChild(button_download);
-                listItem.appendChild(button_jd2);
-                list.appendChild(listItem);
-            });
-        } else {
-            list.innerHTML = '<li>No magnet links found.</li>';
-        }
-    });
-}
-
-
-document.addEventListener('DOMContentLoaded', function () {
-    const apiKeyInput = document.getElementById('apiKeyInput');
-    const saveApiKeyButton = document.getElementById('saveApiKey');
-
-    chrome.storage.local.get('apiKey', function (data) {
-        if (data.apiKey) {
-            apiKeyInput.value = data.apiKey;
-            REAL_DEBRID_API_KEY = data.apiKey;
-        }
-    });
-
-    // Save API key when button is clicked
-    saveApiKeyButton.addEventListener('click', function () {
-        const apiKey = apiKeyInput.value.trim();
-        if (apiKey) {
-            chrome.storage.local.set({ apiKey: apiKey }, function () {
-                alert("API Key saved successfully!");
-            });
-        }
-    });
+// Listen for messages from background (e.g., Nyaa parse results)
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+    // This listener in popup.js is primarily for messages *not* handled
+    // by specific async/await flows, like the Nyaa parse results.
+    // The fetchAllEpisodes function now sets up its own temporary listener.
+    console.log("Popup received message: ", message);
 });
-
-
-
-
-
-function sendToRealDebrid(magnetLink, callback) {
-    chrome.runtime.sendMessage({
-        action: "sendToRealDebrid",
-        apiKey: REAL_DEBRID_API_KEY,
-        magnetLink: magnetLink
-    }, response => {
-        if (response.success) {
-            console.log("Magnet link: " + magnetLink);
-            console.log("Magnet added! Torrent ID: " + response.data.id);
-            callback(response.data)
-        } else {
-            console.warn("Error: " + response.error);
-        }
-    });
-}
-
-function getTorrentInfo(id, callback){
-    chrome.runtime.sendMessage({
-        action: "getTorrentInfo",
-        apiKey: REAL_DEBRID_API_KEY,
-        id: id
-    }, response => {
-        if(response.success){
-            callback(response.data);
-        } else {
-            console.warn("Error: " + response.error);
-        }
-    })
-}
-
-function selectFiles(id, callback){
-    chrome.runtime.sendMessage({
-        action: "selectFiles",
-        apiKey: REAL_DEBRID_API_KEY,
-        id: id
-    }, response => {
-        if(response.success){
-            console.log("selected all files successfully")
-            if (callback) callback();
-        } else {
-            console.warn("Error: " + response.error);
-        }
-    })
-}
-
-function getDownloadLinks(callback) {
-    chrome.runtime.sendMessage({
-        action: "getDownloads",
-        apiKey: REAL_DEBRID_API_KEY
-    }, response => {
-        if (response.success) {
-            console.log("Download links received:", response.data);
-            callback(response.data);  // Pass the download links to the callback
-        } else {
-            console.warn("Error: " + response.error);
-        }
-    });
-}
-
-
-function addFilesToRealDebrid(magnetLink, callback) {
-    sendToRealDebrid(magnetLink, function(magnetResponseData){
-        console.log(magnetResponseData.id);
-        selectFiles(magnetResponseData.id, function(){
-            getTorrentInfo(magnetResponseData.id, function(infoResponseData){
-                console.log(infoResponseData.filename);
-                console.log(infoResponseData.host);
-                console.log(infoResponseData.progress);
-                console.log(infoResponseData.status);
-                if (callback) callback();
-            });
-        });
-    });
-}
-
-function downloadFiles(magnetLink, callback){
-    sendToRealDebrid(magnetLink, function(magnetResponseData){
-        console.log(magnetResponseData.id);
-        selectFiles(magnetResponseData.id, function(){
-            getTorrentInfo(magnetResponseData.id, function(infoResponseData){
-                console.log(infoResponseData.filename);
-                console.log(infoResponseData.host);
-                console.log(infoResponseData.progress);
-                console.log(infoResponseData.status);
-                getDownloadLinks(function(downloadLinks){
-                    console.log("Received download links:", downloadLinks);
-                    downloadLinks.forEach(link => {
-                        // Here you could create download buttons or open the download links
-                        if(link.id == magnetResponseData.id){
-                            console.log("Download this link:", link);
-                            link.links.forEach(download_link => {
-                                console.log(download_link);
-                            })
-                            callback(link);
-                    }
-                    });
-                });
-            });
-        });
-    });
-}
-
-
-function SendToJD2(torrent){
-    const jdUrl = "http://127.0.0.1:9666/flash/add";
-
-    let urls = ""
-    torrent.links.forEach(link =>{
-        urls = urls + link + ","
-    })
-    fetch(jdUrl + "?" +"&&"+ urls, {
-        method: "GET"
-    })
-    .catch(error => {
-        alert("Error connecting to JDownloader: " + error.message);
-    });
-}

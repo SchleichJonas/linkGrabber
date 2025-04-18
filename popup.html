@@ -3,17 +3,41 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>linkGrabber</title>
+    <title>linkGrabber V3</title>
     <link rel="stylesheet" href="popup.css">
 </head>
 <body>
-    <h1>Magnet Links Found:</h1>
-    <h2>API Key:</h2>
-    <input type="text" id="apiKeyInput" placeholder="Enter API Key">
-    <button id="saveApiKey">Save</button>
-    <ul id="magnetLinksList">
-        <!-- Magnet links with buttons will appear here -->
-    </ul>
+    <div class="container">
+        <h1>Link Grabber</h1>
+
+        <div class="api-key-section">
+            <label for="apiKeyInput">Real-Debrid API Key:</label>
+            <div class="input-group">
+                <input type="password" id="apiKeyInput" placeholder="Enter API Key">
+                <button id="saveApiKey" class="save-btn">Save</button>
+            </div>
+        </div>
+
+        <div id="statusMessage" class="status info">Loading...</div>
+        <div id="loadingIndicator" class="loading" style="display: none;">Loading...</div>
+
+        <!-- Section for generic magnet links -->
+        <div id="generalLinksSection" style="display: none;">
+            <h2>Magnet Links Found:</h2>
+            <ul id="magnetLinksList"></ul>
+        </div>
+
+        <!-- Section for MyAnimeList -->
+        <div id="myAnimeListSection" style="display: none;">
+            <h2>MyAnimeList Helper</h2>
+            <div id="malInfo" class="mal-info"></div>
+            <button id="fetchEpisodesButton" class="action-button" disabled>Fetch Episode Links (Nyaa)</button>
+            <div id="malStatus" class="status info"></div>
+            <ul id="episodeLinksList"></ul>
+            <button id="sendAllToJD" class="action-button jd-btn" style="display: none;">Send All Found to JD2</button>
+        </div>
+
+    </div>
     <script src="popup.js"></script>
 </body>
 </html>
