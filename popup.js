@@ -228,16 +228,27 @@ function displayMyAnimeListInfo(animeInfo) {
     malInfoDiv.textContent = `Anime: ${animeInfo.name} | Episodes: ${animeInfo.episodes}`;
     episodeLinksList.innerHTML = ''; // Clear previous results
     malStatus.textContent = '';
+    fetchEpisodesButton.disabled = false; // Ensure it's enabled initially
 
     fetchEpisodesButton.onclick = () => {
+        // Disable button immediately on click
+        fetchEpisodesButton.disabled = true;
+        malStatus.textContent = 'Starting fetch...'; // Give immediate feedback
+
         if (animeInfo.episodes > 0) {
-            fetchAllEpisodes(animeInfo.name, animeInfo.episodes);
+            // Pass the button itself to re-enable it later
+            fetchAllEpisodes(animeInfo.name, animeInfo.episodes, fetchEpisodesButton);
+        } else {
+             malStatus.textContent = 'No episodes found to fetch.';
+             fetchEpisodesButton.disabled = false; // Re-enable if nothing to do
         }
     };
-    fetchEpisodesButton.disabled = false;
+    // Removed the line: fetchEpisodesButton.disabled = false; (it's handled above)
 }
 
-async function fetchAllEpisodes(name, totalEpisodes) {
+
+// Modify fetchAllEpisodes signature and completion block:
+async function fetchAllEpisodes(name, totalEpisodes, fetchButtonElement) { // Added fetchButtonElement
     const searchName = name.replace(/ /g, "+");
     const malStatus = document.getElementById('malStatus');
     const episodeLinksList = document.getElementById('episodeLinksList');
@@ -246,7 +257,7 @@ async function fetchAllEpisodes(name, totalEpisodes) {
 
     malStatus.textContent = 'Fetching episode links...';
     episodeLinksList.innerHTML = ''; // Clear previous results
-    episodeLinksList.innerHTML = '<li>Searching on Nyaa.si...</li>';
+    episodeLinksList.innerHTML = '<li>Initializing search...</li>';
     sendAllToJDButton.style.display = 'none'; // Hide button initially
     sendAllToJDButton.onclick = null; // Clear previous handler
 
@@ -259,9 +270,16 @@ async function fetchAllEpisodes(name, totalEpisodes) {
 
     // Prepare listeners for background responses
     const messageListener = async (message) => {
+        // Ensure message has an episodeNum, otherwise ignore
+        if (!message.episodeNum) return;
+
         if (message.action === 'parseComplete' || message.action === 'parseError' || message.action === 'fetchError') {
             const episodeNum = message.episodeNum;
             const statusSpan = statusSpans.get(episodeNum); // Get the span from the map
+
+            // Avoid double counting if listener fires unexpectedly
+            if (!statusSpan || statusSpan.dataset.processed) return;
+            statusSpan.dataset.processed = true; // Mark as processed
 
             completedCount++;
             malStatus.textContent = `Fetching... (${completedCount}/${totalEpisodes}) | Found: ${foundCount}`;
@@ -271,8 +289,7 @@ async function fetchAllEpisodes(name, totalEpisodes) {
                 episodeLinks.set(episodeNum, message.magnetLink);
                 if (statusSpan) {
                     statusSpan.textContent = '✅ Found';
-                    statusSpan.classList.add('success');
-                    statusSpan.classList.remove('error', 'warning');
+                    statusSpan.className = 'status success'; // Add class for styling
                  } else {
                      console.warn(`Status span for Ep ${episodeNum} not found.`);
                  }
@@ -283,8 +300,7 @@ async function fetchAllEpisodes(name, totalEpisodes) {
                  if (statusSpan) {
                      statusSpan.textContent = `❌ ${errorMsg}`;
                      statusSpan.title = errorDetails; // Show details on hover
-                     statusSpan.classList.add(message.action === 'fetchError' ? 'error' : 'warning');
-                     statusSpan.classList.remove('success');
+                     statusSpan.className = message.action === 'fetchError' ? 'status error' : 'status warning'; // Add class
                  } else {
                      console.warn(`Status span for Ep ${episodeNum} not found.`);
                  }
@@ -300,23 +316,41 @@ async function fetchAllEpisodes(name, totalEpisodes) {
                     sendAllToJDButton.style.display = 'inline-block';
                     sendAllToJDButton.onclick = () => sendMultipleLinksToJdownloader(Array.from(episodeLinks.values()));
                 } else {
-                    episodeLinksList.innerHTML = '<li>No magnet links found for any episode.</li>'; // Clear initial message
+                    // Clear the list items and show a single message
+                    episodeLinksList.innerHTML = '<li>No magnet links found for any episode.</li>';
+                }
+
+                // Re-enable the fetch button now that processing is done
+                if (fetchButtonElement) {
+                    fetchButtonElement.disabled = false;
                 }
             }
         }
     };
+    // Clear any previous listeners just in case (though disabling button is primary fix)
+    // Be cautious with this if other parts of the popup use listeners
+    // chrome.runtime.onMessage.removeListener(messageListener); // Potentially risky if listener is shared
     chrome.runtime.onMessage.addListener(messageListener);
 
     // --- Modified Fetch Loop ---
     // Display placeholders first
-    episodeLinksList.innerHTML = ''; // Clear "Searching..." message
+    episodeLinksList.innerHTML = ''; // Clear "Initializing..." message
     for (let episodeNum = 1; episodeNum <= totalEpisodes; episodeNum++) {
         const listItem = document.createElement('li');
+        listItem.className = 'episode-item'; // Add class for styling
+
+        const labelSpan = document.createElement('span');
+        labelSpan.className = 'episode-label';
+        labelSpan.textContent = `Ep ${episodeNum}: `;
+
         const statusSpan = document.createElement('span');
         statusSpan.id = `status-ep-${episodeNum}`; // Keep ID for potential future use
+        statusSpan.className = 'status info'; // Default status style
         statusSpan.textContent = '⏳ Pending...';
+        statusSpan.dataset.processed = false; // Flag to prevent double counting
         statusSpans.set(episodeNum, statusSpan); // Store span in map
-        listItem.textContent = `Ep ${episodeNum}: `;
+
+        listItem.appendChild(labelSpan);
         listItem.appendChild(statusSpan);
         episodeLinksList.appendChild(listItem);
     }
@@ -324,7 +358,10 @@ async function fetchAllEpisodes(name, totalEpisodes) {
     // Initiate fetch requests sequentially with delay
     for (let episodeNum = 1; episodeNum <= totalEpisodes; episodeNum++) {
         const statusSpan = statusSpans.get(episodeNum);
-        if (statusSpan) statusSpan.textContent = '🔍 Searching...';
+        if (statusSpan) {
+             statusSpan.textContent = '🔍 Searching...';
+             statusSpan.className = 'status info'; // Ensure correct class
+        }
 
         const episodeSearch = `https://nyaa.si/?f=0&c=0_0&q=${searchName}+S01E${String(episodeNum).padStart(2, "0")}&s=seeders&o=desc`;
         console.log(`Requesting search for Ep ${episodeNum}: ${episodeSearch}`);
@@ -339,6 +376,7 @@ async function fetchAllEpisodes(name, totalEpisodes) {
         }
     }
     console.log("All fetch requests sent.");
+    // Note: Button is re-enabled in the message listener's completion block
 }
 
 function displayFoundEpisodeLinks(episodeLinksMap) {
