@@ -255,10 +255,10 @@ async function fetchAllEpisodes(name, totalEpisodes) {
     let completedCount = 0;
 
     // Rate limiting variables
-    let baseDelay = 200; // Base delay in milliseconds
+    let baseDelay = 1000; // Base delay in milliseconds, set to 1 second
     let delayIncrease = 50; // Delay increase per consecutive unfound episode
-    let maxDelay = 500; // Maximum delay allowed
-    let currentDelay = baseDelay; // Current delay, starts at base
+    let maxDelay = 500; // Maximum delay (still 500, as instructed)
+    let currentDelay = baseDelay; // Current delay, starts at the base
     let unfoundEpisodeStreak = 0; // Counter for consecutive unfound episodes
 
     // Prepare listeners for background responses
@@ -289,7 +289,7 @@ async function fetchAllEpisodes(name, totalEpisodes) {
                 // Increase delay on unfound
                 unfoundEpisodeStreak++;
                 currentDelay = Math.min(baseDelay + (unfoundEpisodeStreak * delayIncrease), maxDelay);
-            }
+            } 
 
 
             // Check if all episodes are processed
@@ -334,10 +334,11 @@ async function fetchAllEpisodes(name, totalEpisodes) {
         await Promise.all(promises);
         
         // Delay after each batch regardless of results
-        console.log(`Delaying ${currentDelay}ms after batch. Unfound Streak: ${unfoundEpisodeStreak}`);
+        console.log(`Delaying ${currentDelay}ms after batch. Unfound Streak: ${unfoundEpisodeStreak} Base Delay: ${baseDelay}`);
         await sleep(currentDelay);
-        // Increase delay on every batch
-        unfoundEpisodeStreak++;
+        // Increase delay on every batch, it will be reset on success
+        // only when no links are found
+        
     }
 }
 
