@@ -266,6 +266,15 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       return false;
   }
 
+  // --- Actions possibly handled by the offscreen listener ---
+  // If the action is one handled by the dedicated offscreen listener,
+  // let that listener handle it and don't process it here.
+  if (['parseComplete', 'parseError', 'fetchError'].includes(request.action)) {
+      // console.log("Main listener ignoring action handled by offscreen listener:", request.action);
+      return false; // Or true if the other listener uses sendResponse, but it doesn't currently.
+                    // Returning false is safest as it doesn't keep the channel open.
+  }
+
    // --- Actions requiring API Key ---
    if (!realDebridApiKey) {
     const errorMsg = 'API Key not set. Please set it in the extension popup.';
@@ -344,8 +353,10 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
            responseSent = true;
            break;
 
+        // !! The check added above prevents 'parseComplete' etc. from reaching here !!
         default:
-          console.warn("Unknown action received:", request.action);
+          // Now this should only log genuinely unknown actions
+          console.warn("Unknown action received by main listener:", request.action, request);
           if (!responseSent) sendResponse({ success: false, error: `Unknown action: ${request.action}` });
           return; // Exit IIFE
       }
@@ -356,17 +367,20 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     }
   })();
 
-  return true; // Indicate that the response will be sent asynchronously
+  return true; // Indicate that the response will be sent asynchronously for API key actions
 });
 
 
 // --- Listener for Offscreen Document Responses ---
+// This listener remains unchanged and will correctly handle the messages
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     // Only handle messages expected from the offscreen script
     if (request.action === 'parseComplete' || request.action === 'parseError' || request.action === 'fetchError') {
         console.log(`Background received from offscreen/fetch: ${request.action}`, request);
         // Forward the result/error to the original caller (likely popup.js)
-        chrome.runtime.sendMessage(request);
+        chrome.runtime.sendMessage(request); // Forwarding the message
     }
     // This listener doesn't send responses itself.
 });
+
+// ... (rest of the file remains the same) ...

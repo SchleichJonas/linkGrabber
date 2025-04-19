@@ -245,101 +245,100 @@ async function fetchAllEpisodes(name, totalEpisodes) {
     const episodeLinks = new Map(); // Store magnet links per episode
 
     malStatus.textContent = 'Fetching episode links...';
-    // Clear old results if there were any
-    episodeLinksList.innerHTML = ''; 
-    episodeLinksList.innerHTML = 'Searching on Nyaa.si...<br>';
+    episodeLinksList.innerHTML = ''; // Clear previous results
+    episodeLinksList.innerHTML = '<li>Searching on Nyaa.si...</li>';
     sendAllToJDButton.style.display = 'none'; // Hide button initially
     sendAllToJDButton.onclick = null; // Clear previous handler
 
     let foundCount = 0;
     let completedCount = 0;
+    const requestDelay = 500; // Fixed delay in ms between each request
 
-    // Rate limiting variables
-    let baseDelay = 1000; // Base delay in milliseconds, set to 1 second
-    let delayIncrease = 50; // Delay increase per consecutive unfound episode
-    let maxDelay = 500; // Maximum delay (still 500, as instructed)
-    let currentDelay = baseDelay; // Current delay, starts at the base
-    let unfoundEpisodeStreak = 0; // Counter for consecutive unfound episodes
+    // Prepare UI elements map for quick access
+    const statusSpans = new Map();
 
     // Prepare listeners for background responses
     const messageListener = async (message) => {
         if (message.action === 'parseComplete' || message.action === 'parseError' || message.action === 'fetchError') {
             const episodeNum = message.episodeNum;
-            const statusSpan = document.getElementById(`status-ep-${episodeNum}`);
-            
+            const statusSpan = statusSpans.get(episodeNum); // Get the span from the map
+
             completedCount++;
             malStatus.textContent = `Fetching... (${completedCount}/${totalEpisodes}) | Found: ${foundCount}`;
-            
+
             if (message.action === 'parseComplete' && message.magnetLink) {
                 foundCount++;
                 episodeLinks.set(episodeNum, message.magnetLink);
-                if (statusSpan) statusSpan.textContent = '✅ Found';
-                episodeLinksList.innerHTML += `Ep ${episodeNum}: Found<br>`; // Simple logging
-                
-                // Reset delay and streak on success
-                currentDelay = baseDelay;
-                unfoundEpisodeStreak = 0;
+                if (statusSpan) {
+                    statusSpan.textContent = '✅ Found';
+                    statusSpan.classList.add('success');
+                    statusSpan.classList.remove('error', 'warning');
+                 } else {
+                     console.warn(`Status span for Ep ${episodeNum} not found.`);
+                 }
             } else {
                 const errorMsg = message.action === 'fetchError' ? 'Fetch Error' : (message.action === 'parseError' ? 'Parse Error' : 'Not Found');
-                console.log(`Error or no link for episode ${episodeNum}: ${message.error || 'No link'}. Delay: ${currentDelay}ms.`);
-                if (statusSpan) statusSpan.textContent = `❌ ${errorMsg}`;
-                episodeLinksList.innerHTML += `Ep ${episodeNum}: ${errorMsg}<br>`; // Simple logging
-                console.warn(`Error or no link for episode ${episodeNum}:`, message.error || 'No link');
-
-                // Increase delay on unfound
-                unfoundEpisodeStreak++;
-                currentDelay = Math.min(baseDelay + (unfoundEpisodeStreak * delayIncrease), maxDelay);
-            } 
-
+                const errorDetails = message.error || 'No link found';
+                console.warn(`Error or no link for episode ${episodeNum}: ${errorDetails}`);
+                 if (statusSpan) {
+                     statusSpan.textContent = `❌ ${errorMsg}`;
+                     statusSpan.title = errorDetails; // Show details on hover
+                     statusSpan.classList.add(message.action === 'fetchError' ? 'error' : 'warning');
+                     statusSpan.classList.remove('success');
+                 } else {
+                     console.warn(`Status span for Ep ${episodeNum} not found.`);
+                 }
+            }
 
             // Check if all episodes are processed
             if (completedCount === totalEpisodes) {
-                chrome.runtime.onMessage.removeListener(messageListener);
+                chrome.runtime.onMessage.removeListener(messageListener); // Clean up listener
                 malStatus.textContent = `Search complete. Found ${foundCount}/${totalEpisodes} links.`;
-                 episodeLinksList.innerHTML = `Search complete. Found ${foundCount} links.<br>`; // Clear intermediate logs
 
                 if (foundCount > 0) {
-                    // Display found links and enable Send All button
-                    displayFoundEpisodeLinks(episodeLinks);
+                    displayFoundEpisodeLinks(episodeLinks); // Display results
                     sendAllToJDButton.style.display = 'inline-block';
                     sendAllToJDButton.onclick = () => sendMultipleLinksToJdownloader(Array.from(episodeLinks.values()));
                 } else {
-                    episodeLinksList.innerHTML = 'No magnet links found for any episode.';
+                    episodeLinksList.innerHTML = '<li>No magnet links found for any episode.</li>'; // Clear initial message
                 }
             }
         }
     };
     chrome.runtime.onMessage.addListener(messageListener);
 
-    // Initiate fetch requests via background script
-    // Search in batches of 5
-    for (let startEpisode = 1; startEpisode <= totalEpisodes; startEpisode += 5) {
-        const batchSize = Math.min(5, totalEpisodes - startEpisode + 1);
-        const promises = [];
-        
-        for (let offset = 0; offset < batchSize; offset++) {
-          const episodeNum = startEpisode + offset;
-          // Add placeholder for status
-          episodeLinksList.innerHTML += `<li>Ep ${episodeNum}: <span id="status-ep-${episodeNum}">Searching...</span></li>`;
-          const episodeSearch = `https://nyaa.si/?f=0&c=0_0&q=${searchName}+S01E${String(episodeNum).padStart(2, "0")}&s=seeders&o=desc`;
-          console.log(`Requesting search for Ep ${episodeNum}: ${episodeSearch} with a delay of ${currentDelay}ms.`);
-          // Prepare the request with a promise
-          promises.push(new Promise(resolve => {
-            chrome.runtime.sendMessage({ action: "fetchSearch", url: episodeSearch, episodeNum: episodeNum });
-            resolve();
-          }));
-        }
-    
-        // Wait for all requests to be sent
-        await Promise.all(promises);
-        
-        // Delay after each batch regardless of results
-        console.log(`Delaying ${currentDelay}ms after batch. Unfound Streak: ${unfoundEpisodeStreak} Base Delay: ${baseDelay}`);
-        await sleep(currentDelay);
-        // Increase delay on every batch, it will be reset on success
-        // only when no links are found
-        
+    // --- Modified Fetch Loop ---
+    // Display placeholders first
+    episodeLinksList.innerHTML = ''; // Clear "Searching..." message
+    for (let episodeNum = 1; episodeNum <= totalEpisodes; episodeNum++) {
+        const listItem = document.createElement('li');
+        const statusSpan = document.createElement('span');
+        statusSpan.id = `status-ep-${episodeNum}`; // Keep ID for potential future use
+        statusSpan.textContent = '⏳ Pending...';
+        statusSpans.set(episodeNum, statusSpan); // Store span in map
+        listItem.textContent = `Ep ${episodeNum}: `;
+        listItem.appendChild(statusSpan);
+        episodeLinksList.appendChild(listItem);
     }
+
+    // Initiate fetch requests sequentially with delay
+    for (let episodeNum = 1; episodeNum <= totalEpisodes; episodeNum++) {
+        const statusSpan = statusSpans.get(episodeNum);
+        if (statusSpan) statusSpan.textContent = '🔍 Searching...';
+
+        const episodeSearch = `https://nyaa.si/?f=0&c=0_0&q=${searchName}+S01E${String(episodeNum).padStart(2, "0")}&s=seeders&o=desc`;
+        console.log(`Requesting search for Ep ${episodeNum}: ${episodeSearch}`);
+
+        // Send the request
+        chrome.runtime.sendMessage({ action: "fetchSearch", url: episodeSearch, episodeNum: episodeNum });
+
+        // Wait before sending the next request
+        if (episodeNum < totalEpisodes) {
+           // console.log(`Waiting ${requestDelay}ms before next request...`);
+            await sleep(requestDelay);
+        }
+    }
+    console.log("All fetch requests sent.");
 }
 
 function displayFoundEpisodeLinks(episodeLinksMap) {
