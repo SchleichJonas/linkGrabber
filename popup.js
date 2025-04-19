@@ -247,7 +247,13 @@ function displayMyAnimeListInfo(animeInfo) {
 }
 
 
-// Modify fetchAllEpisodes signature and completion block:
+function sleep(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+// Global or module-level variable to track the listener instance
+let currentFetchListenerInstance = null;
+
 async function fetchAllEpisodes(name, totalEpisodes, fetchButtonElement) { // Added fetchButtonElement
     const searchName = name.replace(/ /g, "+");
     const malStatus = document.getElementById('malStatus');
@@ -268,50 +274,65 @@ async function fetchAllEpisodes(name, totalEpisodes, fetchButtonElement) { // Ad
     // Prepare UI elements map for quick access
     const statusSpans = new Map();
 
-    // Prepare listeners for background responses
+    // --- Start of Listener Definition with Logging ---
     const messageListener = async (message) => {
-        // Ensure message has an episodeNum, otherwise ignore
-        if (!message.episodeNum) return;
+        console.log("Popup listener received:", JSON.stringify(message)); // Log received message
+
+        // Check if this listener instance should still be active
+        if (currentFetchListenerInstance !== messageListener) {
+            console.log("Popup listener: Stale listener instance detected. Ignoring message.");
+            return; // Don't process if this isn't the active listener
+        }
+
+        // Ensure message has an episodeNum and is relevant
+        if (typeof message.episodeNum !== 'number') {
+             console.log("Popup listener ignored message (no episodeNum or invalid type):", message);
+             return;
+        }
 
         if (message.action === 'parseComplete' || message.action === 'parseError' || message.action === 'fetchError') {
+            console.log(`Popup listener processing action '${message.action}' for Ep ${message.episodeNum}`);
             const episodeNum = message.episodeNum;
-            const statusSpan = statusSpans.get(episodeNum); // Get the span from the map
+            const statusSpan = statusSpans.get(episodeNum);
 
-            // Avoid double counting if listener fires unexpectedly
-            if (!statusSpan || statusSpan.dataset.processed) return;
-            statusSpan.dataset.processed = true; // Mark as processed
+            if (!statusSpan) {
+                console.error(`Popup listener: Could not find statusSpan for Ep ${episodeNum}`);
+                return; // Cannot proceed without the span
+            }
+
+            // Avoid double counting using the data attribute
+             if (statusSpan.dataset.processed === "true") {
+                console.warn(`Popup listener: Already processed Ep ${episodeNum}. Ignoring duplicate message.`);
+                return;
+            }
+            statusSpan.dataset.processed = "true"; // Mark as processed immediately
 
             completedCount++;
+            console.log(`Popup listener: Completed count is now ${completedCount}/${totalEpisodes} for Ep ${episodeNum}`);
             malStatus.textContent = `Fetching... (${completedCount}/${totalEpisodes}) | Found: ${foundCount}`;
 
             if (message.action === 'parseComplete' && message.magnetLink) {
                 foundCount++;
                 episodeLinks.set(episodeNum, message.magnetLink);
-                if (statusSpan) {
-                    statusSpan.textContent = '✅ Found';
-                    statusSpan.className = 'status success'; // Add class for styling
-                 } else {
-                     console.warn(`Status span for Ep ${episodeNum} not found.`);
-                 }
+                 statusSpan.textContent = '✅ Found';
+                 statusSpan.className = 'status success';
+                 console.log(`Popup listener: Marked Ep ${episodeNum} as Found.`);
             } else {
                 const errorMsg = message.action === 'fetchError' ? 'Fetch Error' : (message.action === 'parseError' ? 'Parse Error' : 'Not Found');
                 const errorDetails = message.error || 'No link found';
-                console.warn(`Error or no link for episode ${episodeNum}: ${errorDetails}`);
-                 if (statusSpan) {
-                     statusSpan.textContent = `❌ ${errorMsg}`;
-                     statusSpan.title = errorDetails; // Show details on hover
-                     statusSpan.className = message.action === 'fetchError' ? 'status error' : 'status warning'; // Add class
-                 } else {
-                     console.warn(`Status span for Ep ${episodeNum} not found.`);
-                 }
+                console.warn(`Popup listener: Error or no link for episode ${episodeNum}: ${errorDetails}`);
+                 statusSpan.textContent = `❌ ${errorMsg}`;
+                 statusSpan.title = errorDetails; // Show actual error on hover
+                 statusSpan.className = message.action === 'fetchError' ? 'status error' : 'status warning';
+                 console.log(`Popup listener: Marked Ep ${episodeNum} as ${errorMsg}.`);
             }
 
             // Check if all episodes are processed
             if (completedCount === totalEpisodes) {
-                chrome.runtime.onMessage.removeListener(messageListener); // Clean up listener
-                malStatus.textContent = `Search complete. Found ${foundCount}/${totalEpisodes} links.`;
+                 console.log(`Popup listener: All episodes processed (${completedCount}/${totalEpisodes}). Finalizing UI.`);
+                 malStatus.textContent = `Search complete. Found ${foundCount}/${totalEpisodes} links.`;
 
-                if (foundCount > 0) {
+                 if (foundCount > 0) {
                     displayFoundEpisodeLinks(episodeLinks); // Display results
                     sendAllToJDButton.style.display = 'inline-block';
                     sendAllToJDButton.onclick = () => sendMultipleLinksToJdownloader(Array.from(episodeLinks.values()));
@@ -320,19 +341,41 @@ async function fetchAllEpisodes(name, totalEpisodes, fetchButtonElement) { // Ad
                     episodeLinksList.innerHTML = '<li>No magnet links found for any episode.</li>';
                 }
 
-                // Re-enable the fetch button now that processing is done
+                // Re-enable the fetch button
                 if (fetchButtonElement) {
                     fetchButtonElement.disabled = false;
+                    console.log("Popup listener: Fetch button re-enabled.");
                 }
+
+                // Clean up listener AFTER all updates for this final message are done.
+                 console.log("Popup listener: Removing self (instance).");
+                 // Check if the listener actually exists before trying to remove
+                 if (chrome.runtime.onMessage.hasListener(messageListener)) {
+                    chrome.runtime.onMessage.removeListener(messageListener);
+                 }
+                 currentFetchListenerInstance = null; // Clear the global reference
             }
+        } else {
+             console.log("Popup listener ignored message (action not relevant):", message.action);
         }
     };
-    // Clear any previous listeners just in case (though disabling button is primary fix)
-    // Be cautious with this if other parts of the popup use listeners
-    // chrome.runtime.onMessage.removeListener(messageListener); // Potentially risky if listener is shared
-    chrome.runtime.onMessage.addListener(messageListener);
+    // --- End of Listener Definition ---
 
-    // --- Modified Fetch Loop ---
+
+    // Explicitly remove the *previous* listener instance if it exists and is tracked.
+    if (currentFetchListenerInstance && chrome.runtime.onMessage.hasListener(currentFetchListenerInstance)) {
+        console.log("Removing previous fetch listener instance before adding new one.");
+        chrome.runtime.onMessage.removeListener(currentFetchListenerInstance);
+        currentFetchListenerInstance = null; // Ensure reference is cleared
+    }
+
+    // Store the reference to *this specific* listener function instance globally
+    currentFetchListenerInstance = messageListener;
+    chrome.runtime.onMessage.addListener(currentFetchListenerInstance);
+    console.log("Added new fetch listener instance for this run.");
+
+
+    // --- Fetch Loop ---
     // Display placeholders first
     episodeLinksList.innerHTML = ''; // Clear "Initializing..." message
     for (let episodeNum = 1; episodeNum <= totalEpisodes; episodeNum++) {
@@ -347,7 +390,7 @@ async function fetchAllEpisodes(name, totalEpisodes, fetchButtonElement) { // Ad
         statusSpan.id = `status-ep-${episodeNum}`; // Keep ID for potential future use
         statusSpan.className = 'status info'; // Default status style
         statusSpan.textContent = '⏳ Pending...';
-        statusSpan.dataset.processed = false; // Flag to prevent double counting
+        statusSpan.dataset.processed = "false"; // Initialize flag as string 'false'
         statusSpans.set(episodeNum, statusSpan); // Store span in map
 
         listItem.appendChild(labelSpan);
@@ -356,11 +399,15 @@ async function fetchAllEpisodes(name, totalEpisodes, fetchButtonElement) { // Ad
     }
 
     // Initiate fetch requests sequentially with delay
+    console.log("Starting sequential fetch requests...");
     for (let episodeNum = 1; episodeNum <= totalEpisodes; episodeNum++) {
         const statusSpan = statusSpans.get(episodeNum);
         if (statusSpan) {
              statusSpan.textContent = '🔍 Searching...';
              statusSpan.className = 'status info'; // Ensure correct class
+        } else {
+            console.error(`Could not find statusSpan for Ep ${episodeNum} before sending request!`);
+            // Consider how to handle this - maybe skip? For now, just log.
         }
 
         const episodeSearch = `https://nyaa.si/?f=0&c=0_0&q=${searchName}+S01E${String(episodeNum).padStart(2, "0")}&s=seeders&o=desc`;
@@ -369,13 +416,13 @@ async function fetchAllEpisodes(name, totalEpisodes, fetchButtonElement) { // Ad
         // Send the request
         chrome.runtime.sendMessage({ action: "fetchSearch", url: episodeSearch, episodeNum: episodeNum });
 
-        // Wait before sending the next request
+        // Wait before sending the next request (unless it's the last one)
         if (episodeNum < totalEpisodes) {
-           // console.log(`Waiting ${requestDelay}ms before next request...`);
+            // console.log(`Waiting ${requestDelay}ms before next request...`);
             await sleep(requestDelay);
         }
     }
-    console.log("All fetch requests sent.");
+    console.log("All fetch requests have been sent.");
     // Note: Button is re-enabled in the message listener's completion block
 }
 
