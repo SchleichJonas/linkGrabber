@@ -252,10 +252,16 @@ async function fetchAllEpisodes(name, totalEpisodes) {
     let foundCount = 0;
     let completedCount = 0;
 
+    // Rate limiting variables
+    let baseDelay = 200; // Base delay in milliseconds
+    let delayIncrease = 50; // Delay increase per consecutive unfound episode
+    let maxDelay = 500; // Maximum delay allowed
+    let currentDelay = baseDelay; // Current delay, starts at base
+    let unfoundEpisodeStreak = 0; // Counter for consecutive unfound episodes
+
     // Prepare listeners for background responses
     const messageListener = (message) => {
         if (message.action === 'parseComplete' || message.action === 'parseError' || message.action === 'fetchError') {
-            completedCount++;
             const episodeNum = message.episodeNum;
             const statusSpan = document.getElementById(`status-ep-${episodeNum}`);
 
@@ -263,13 +269,24 @@ async function fetchAllEpisodes(name, totalEpisodes) {
                 foundCount++;
                 episodeLinks.set(episodeNum, message.magnetLink);
                 if (statusSpan) statusSpan.textContent = '✅ Found';
-                 episodeLinksList.innerHTML += `Ep ${episodeNum}: Found<br>`; // Simple logging
+                episodeLinksList.innerHTML += `Ep ${episodeNum}: Found<br>`; // Simple logging
+                
+                // Reset delay and streak on success
+                currentDelay = baseDelay;
+                unfoundEpisodeStreak = 0;
             } else {
                 const errorMsg = message.action === 'fetchError' ? 'Fetch Error' : (message.action === 'parseError' ? 'Parse Error' : 'Not Found');
                 if (statusSpan) statusSpan.textContent = `❌ ${errorMsg}`;
-                 episodeLinksList.innerHTML += `Ep ${episodeNum}: ${errorMsg}<br>`; // Simple logging
+                episodeLinksList.innerHTML += `Ep ${episodeNum}: ${errorMsg}<br>`; // Simple logging
                 console.warn(`Error or no link for episode ${episodeNum}:`, message.error || 'No link');
+
+                // Increase delay on unfound
+                unfoundEpisodeStreak++;
+                currentDelay = Math.min(baseDelay + (unfoundEpisodeStreak * delayIncrease), maxDelay);
             }
+
+            completedCount++;
+
 
             malStatus.textContent = `Fetching... (${completedCount}/${totalEpisodes}) | Found: ${foundCount}`;
 
@@ -296,11 +313,13 @@ async function fetchAllEpisodes(name, totalEpisodes) {
     for (let i = 1; i <= totalEpisodes; i++) {
         // Add placeholder for status
         // episodeLinksList.innerHTML += `<li>Ep ${i}: <span id="status-ep-${i}">Searching...</span></li>`;
-
         const episodeSearch = `https://nyaa.si/?f=0&c=0_0&q=${searchName}+S01E${String(i).padStart(2, "0")}&s=seeders&o=desc`;
         console.log(`Requesting search for Ep ${i}: ${episodeSearch}`);
         chrome.runtime.sendMessage({ action: "fetchSearch", url: episodeSearch, episodeNum: i });
-        await sleep(200); // Basic rate limiting
+
+        // Adaptive delay logic applied here
+        console.log(`Delaying ${currentDelay}ms before next request. Unfound Streak: ${unfoundEpisodeStreak}`);
+        await sleep(currentDelay);
     }
 }
 
@@ -319,23 +338,29 @@ function displayFoundEpisodeLinks(episodeLinksMap) {
         linkText.textContent = `Ep ${epNum}: ${magnetLink.substring(0, 40)}...`;
         linkText.title = magnetLink;
 
-        const buttonContainer = document.createElement('div');
-        buttonContainer.classList.add('button-group');
+        const linkContainer = document.createElement('div');
+        linkContainer.classList.add('link-container');
+
+        const buttonGroup = document.createElement('div');
+        buttonGroup.classList.add('button-group');
 
         const rdButton = createButton('RD', 'rd-btn', () => processLinkWithRealDebrid(magnetLink));
         const jdButton = createButton('JD2', 'jd-btn', () => processAndSendToJdownloader(magnetLink));
         const copyButton = createButton('Copy', 'copy-btn', () => {
             navigator.clipboard.writeText(magnetLink)
-                .then(() => updateStatus(`Ep ${epNum} link copied!`, 'success'))
-                .catch(err => updateStatus(`Copy failed: ${err.message}`, 'error'));
+            .then(() => updateStatus(`Ep ${epNum} link copied!`, 'success'))
+            .catch(err => updateStatus(`Copy failed: ${err.message}`, 'error'));
         });
 
-        buttonContainer.appendChild(rdButton);
-        buttonContainer.appendChild(jdButton);
-        buttonContainer.appendChild(copyButton);
-
+        buttonGroup.appendChild(rdButton);
+        buttonGroup.appendChild(jdButton);
+        buttonGroup.appendChild(copyButton);
+        // Add link to search query
+        const searchLink = addSearchLink(episodeLinksList, epNum, episodeLinksMap);
+        linkContainer.appendChild(buttonGroup);
+        linkContainer.appendChild(searchLink);
         listItem.appendChild(linkText);
-        listItem.appendChild(buttonContainer);
+        listItem.appendChild(linkContainer);
         episodeLinksList.appendChild(listItem);
     });
 }
@@ -534,6 +559,15 @@ async function pollTorrentCompletion(torrentId, maxAttempts = 20, delay = 3000) 
         }
     }
     throw new Error(`Torrent ${torrentId} did not complete processing within the time limit.`);
+}
+
+function addSearchLink(episodeLinksList, epNum, episodeLinksMap) {
+    const searchLink = document.createElement('a');
+    const episodeSearch = episodeLinksMap.get(epNum).split('&tr')[0].split('magnet:?xt=urn:btih:')[0];
+    searchLink.href = episodeSearch;
+    searchLink.textContent = "Search Query";
+    searchLink.target = "_blank";
+    return searchLink;
 }
 
 async function sendLinksToJdownloader(links) {
